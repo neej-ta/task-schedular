@@ -1,0 +1,27 @@
+{
+  "name": "conductor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Conductor — background task scheduling & execution platform (all-Node build)",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "dashboard"
+  ],
+  "scripts": {
+    "migrate": "npm run migrate -w @conductor/db",
+    "seed": "npm run seed -w @conductor/gateway-api",
+    "gateway": "npm run dev -w @conductor/gateway-api",
+    "dashboard": "npm run dev -w @conductor/dashboard",
+    "typecheck": "tsc -b --pretty",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

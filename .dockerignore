@@ -1,0 +1,47 @@
+# Keep the Docker build context small and reproducible. The app image installs
+# the workspace graph from the committed manifests + lockfile and builds inside
+# the container, so none of the host's installed/built artifacts are needed.
+
+# Dependencies (reinstalled in-image from package-lock.json)
+**/node_modules
+
+# Build output (rebuilt in-image)
+**/dist
+**/build
+**/*.tsbuildinfo
+dashboard/dist
+
+# Env & secrets — never bake host secrets into an image layer
+.env
+.env.*
+!.env.example
+**/*.local
+
+# Local state / volumes
+.data/
+**/coverage
+**/.nyc_output
+
+# VCS & CI
+.git
+.gitignore
+.github/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Tooling & agent state
+.claude/
+
+# Docs & meta not needed at build time
+docs/
+*.md
+!README.md
+
+# Logs
+**/*.log
+logs/
+npm-debug.log*

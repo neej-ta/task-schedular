@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Vite
+dashboard/dist/
+.vite/
+
+# Env & secrets — NEVER commit real secrets
+.env
+.env.local
+.env.*.local
+*.local
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Packaged artifacts
+*.tgz
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Claude Code local tooling / agent state (not part of the project)
+.claude/
+
+# Docker volumes (if bind-mounted locally)
+.data/
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Playwright / screenshot artifacts from scripts/
+test-results/
+playwright-report/
+*.png
+!docs/**/*.png
