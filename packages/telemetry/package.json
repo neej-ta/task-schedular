@@ -1,0 +1,15 @@
+{
+  "name": "@conductor/telemetry",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "prom-client": "^15.1.3"
+  },
+  "//note": "OpenTelemetry tracing is an OPTIONAL integration point: tracing.ts dynamically imports @opentelemetry/{sdk-node,auto-instrumentations-node,exporter-trace-otlp-http} only when OTEL_EXPORTER_OTLP_ENDPOINT is set, failing soft if absent. They are NOT bundled by default because their transitive deps carry CVEs (exporter-prometheus DoS, gaxios/uuid). Add them + an OTel Collector/Tempo to light up distributed traces. See docs/DECISIONS.md."
+}
