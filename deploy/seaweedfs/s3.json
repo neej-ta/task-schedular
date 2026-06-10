@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "conductor",
+      "credentials": [
+        { "accessKey": "conductor", "secretKey": "conductor_dev_pw" }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

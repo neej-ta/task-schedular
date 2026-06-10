@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 10s
+  scrape_timeout: 8s
+
+scrape_configs:
+  - job_name: gateway-api
+    static_configs:
+      - targets: ['gateway-api:8080']
+  - job_name: worker-core
+    static_configs:
+      - targets: ['worker-core:9101']
+  - job_name: worker-edge
+    static_configs:
+      - targets: ['worker-edge:9102']
