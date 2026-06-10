@@ -1,0 +1,151 @@
+# Conductor — local development stack (consolidated to 5 containers).
+#   docker compose up --build
+#
+# Open-source only — every image is permissive (PostgreSQL / MPL-2.0 / BSD /
+# Apache-2.0). No AGPL or source-available components.
+#
+#   postgres   — control-plane DB + folded-in `demo` target DB
+#   rabbitmq   — message broker (delayed-message plugin)
+#   valkey     — cache / locks / progress counters (BSD; Redis replacement)
+#   seaweedfs  — S3-compatible object storage (Apache-2.0; MinIO replacement)
+#   app        — gateway-api + scheduler + worker-core + worker-edge + dashboard
+#                + a folded-in mock-REST endpoint, run as supervised processes
+#
+# Defaults below are DEV ONLY — never use these values in production.
+
+name: conductor
+
+services:
+  # ── Control-plane DB (+ the seeded demo project's `demo` target DB) ─────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: conductor
+      POSTGRES_PASSWORD: conductor_dev_pw
+      POSTGRES_DB: conductor
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # On first init: create the `demo` role + `demo` database + customers
+      # table (folds the former demo-target container into this instance).
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U conductor -d conductor']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Messaging (with delayed-message-exchange plugin) ────────────────────────
+  rabbitmq:
+    build:
+      context: deploy/rabbitmq
+    image: conductor-rabbitmq:3.13-delayed
+    environment:
+      RABBITMQ_DEFAULT_USER: conductor
+      RABBITMQ_DEFAULT_PASS: conductor_dev_pw
+    ports:
+      - '5672:5672' # AMQP
+      - '15672:15672' # management UI
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # ── Cache / locks / progress counters (BSD-licensed Redis replacement) ──────
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'valkey-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── S3-compatible object storage (Apache-2.0 MinIO replacement) ─────────────
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    # `server -s3` brings up master+volume+filer+S3 (S3 API on :8333). The
+    # identities file maps the conductor access/secret keys onto S3 auth.
+    command: 'server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0'
+    ports:
+      - '8333:8333' # S3 API
+      - '9333:9333' # master UI
+    volumes:
+      - seaweeddata:/data
+      - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+
+  # ── Application (all backend services + dashboard, one image) ───────────────
+  # Scale note: this image runs the scheduler as a single leader instance; the
+  # advisory-lock leader election still works, it just never contends.
+  app:
+    build:
+      context: .
+      dockerfile: deploy/app/Dockerfile
+    environment:
+      DATABASE_URL: postgres://conductor:conductor_dev_pw@postgres:5432/conductor
+      RABBITMQ_URL: amqp://conductor:conductor_dev_pw@rabbitmq:5672
+      REDIS_URL: redis://valkey:6379
+      GATEWAY_PORT: '8080'
+      GATEWAY_HOST: 0.0.0.0
+      # Dashboard is served same-origin from :8080; 5173 kept for `vite` dev.
+      CORS_ORIGIN: http://localhost:8080,http://localhost:5173
+      LOG_LEVEL: info
+      JWT_SECRET: dev-only-change-me-in-prod-please-32chars
+      JWT_ISSUER: conductor
+      JWT_EXPIRES_IN: 12h
+      CONDUCTOR_MASTER_KEY: Y29uZHVjdG9yLWRldi1tYXN0ZXIta2V5LTMyYnl0ZXM=
+      CONDUCTOR_MASTER_KEY_ID: dev-local-v1
+      # postgres = demo target DB host; 127.0.0.1/32 = folded-in mock-REST.
+      SSRF_ALLOWLIST: postgres,127.0.0.1/32
+      # Demo target DB now lives on the main postgres instance (separate db/user).
+      DEMO_TARGET_HOST: postgres
+      DEMO_TARGET_PORT: '5432'
+      DEMO_TARGET_DB: demo
+      DEMO_TARGET_USER: demo
+      DEMO_TARGET_PASSWORD: demo_dev_pw
+      # Folded-in mock-REST runs in this container on 127.0.0.1:4000.
+      MOCK_REST_URL: http://127.0.0.1:4000/customers
+      AUTO_MIGRATE: 'true'
+      SEED_ON_BOOT: 'true'
+      SERVE_DASHBOARD: 'true'
+      # Scheduler + outbox-relay cadence.
+      SCHEDULER_TICK_MS: '5000'
+      RELAY_TICK_MS: '1000'
+      # Object storage (SeaweedFS, S3-compatible).
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_ACCESS_KEY: conductor
+      S3_SECRET_KEY: conductor_dev_pw
+      S3_BUCKET: uploads
+      S3_REGION: us-east-1
+      S3_FORCE_PATH_STYLE: 'true'
+    ports:
+      - '8080:8080' # gateway API + dashboard UI
+      - '9101:9101' # worker-core /metrics
+      - '9102:9102' # worker-edge /metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_started
+    # Node is guaranteed present; the seed waits for storage on its own.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+volumes:
+  pgdata:
+  seaweeddata:
