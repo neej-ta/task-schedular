@@ -68,45 +68,45 @@ export function App() {
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white">
-                <Waypoints className="h-4 w-4" />
-              </span>
-              <span className="text-base font-semibold text-slate-900">Conductor</span>
-            </div>
-            <nav className="flex gap-1">
-              {NAV.map(({ key, label, icon: Icon }) => (
-                <button
-                  key={key}
-                  onClick={() => { setPage(key); setJobId(null); }}
-                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                    page === key ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <Icon className="h-4 w-4" /> {label}
-                </button>
-              ))}
-            </nav>
-          </div>
-          <div className="flex items-center gap-3 text-sm">
-            <Pill tone={connected ? 'green' : 'slate'} dot title="Live updates from the server">
-              {connected ? 'Live' : 'Offline'}
-            </Pill>
-            <div className="hidden text-right sm:block">
-              <div className="font-medium text-slate-700">{user.email}</div>
+    <div className="flex min-h-screen">
+      <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-slate-200 bg-white/90 backdrop-blur">
+        <div className="flex items-center gap-2 px-5 py-4">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white">
+            <Waypoints className="h-4 w-4" />
+          </span>
+          <span className="text-base font-semibold text-slate-900">Conductor</span>
+        </div>
+        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
+          {NAV.map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              onClick={() => { setPage(key); setJobId(null); }}
+              className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                page === key ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Icon className="h-4 w-4" /> {label}
+            </button>
+          ))}
+        </nav>
+        <div className="border-t border-slate-200 px-3 py-3">
+          <Pill tone={connected ? 'green' : 'slate'} dot title="Live updates from the server">
+            {connected ? 'Live' : 'Offline'}
+          </Pill>
+          <div className="mt-3 flex items-center justify-between gap-2 text-sm">
+            <div className="min-w-0">
+              <div className="truncate font-medium text-slate-700">{user.email}</div>
               <div className="text-xs capitalize text-slate-400">{user.role}</div>
             </div>
-            <button onClick={logout} title="Sign out" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700">
+            <button onClick={logout} title="Sign out" className="shrink-0 rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700">
               <LogOut className="h-4 w-4" />
             </button>
           </div>
         </div>
-      </header>
-      <main className="mx-auto max-w-6xl p-6">{renderPage()}</main>
+      </aside>
+      <main className="flex-1 overflow-x-hidden">
+        <div className="mx-auto max-w-6xl p-6">{renderPage()}</div>
+      </main>
     </div>
   );
 }
