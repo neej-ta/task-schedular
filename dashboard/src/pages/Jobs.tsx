@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { ListChecks } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ListChecks, Plus } from 'lucide-react';
 import { api } from '../api';
+import { useAuth } from '../auth';
 import type { Job } from '../types';
 import { typeInfo, statusInfo } from '../labels';
-import { Card, EmptyState, Input, PageHeader, Pill, Select } from '../ui';
+import { Button, Card, EmptyState, Input, PageHeader, Pill, Select } from '../ui';
+import { NewTaskForm } from './NewTaskForm';
 
 function timeAgo(iso: string): string {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -15,6 +17,10 @@ function timeAgo(iso: string): string {
 }
 
 export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const canEdit = user?.role === 'admin' || user?.role === 'operator';
+  const [showForm, setShowForm] = useState(false);
   const [status, setStatus] = useState('');
   const [type, setType] = useState('');
   const [q, setQ] = useState('');
@@ -36,7 +42,24 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
       <PageHeader
         title="Tasks"
         description="Every piece of background work Conductor runs — importing, exporting, updating, or syncing your data. Click any task to watch it live."
+        actions={canEdit ? (
+          <Button onClick={() => setShowForm((s) => !s)}>
+            <Plus className="h-4 w-4" />{showForm ? 'Close' : 'New task'}
+          </Button>
+        ) : undefined}
       />
+
+      {showForm && canEdit && (
+        <div className="mb-4">
+          <NewTaskForm
+            onCreated={(jobId) => {
+              setShowForm(false);
+              void qc.invalidateQueries({ queryKey: ['jobs'] });
+              if (jobId) onOpenJob(jobId);
+            }}
+          />
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap gap-2">
         <Input placeholder="Search tasks…" value={q} onChange={(e) => setQ(e.target.value)} className="w-48" />
@@ -61,8 +84,13 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
 
       {data && data.jobs.length === 0 ? (
         <EmptyState icon={<ListChecks className="h-10 w-10" />} title="No tasks yet">
-          Tasks appear here when you run something. Head to <b>Schedules</b> and press <b>Run now</b> on any
-          task to see it in action.
+          {canEdit ? (
+            <>Tasks appear here when you run something. Press <b>New task</b> above to start one now, or set up a
+            recurring one under <b>Schedules</b>.</>
+          ) : (
+            <>Tasks appear here when you run something. Head to <b>Schedules</b> and press <b>Run now</b> on any
+            task to see it in action.</>
+          )}
         </EmptyState>
       ) : (
         <Card className="overflow-hidden">
