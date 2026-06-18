@@ -1,6 +1,6 @@
 import { getTargetPool, quoteIdent, introspectColumns, coerce } from '@conductor/targetdb';
 import { report, type JobContext } from '@conductor/worker-runtime';
-import { runRowJob, sourceFieldFor } from '../rowPipeline.js';
+import { runRowJob, sourceFieldFor, firstUnique } from '../rowPipeline.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // bulk_update (spec §11): match on a key, write only the mapped fields, with
@@ -65,10 +65,4 @@ export async function bulkUpdate(ctx: JobContext): Promise<void> {
   await report.endProgress(jobId, 'completed');
   await report.event('job.completed', summary, { jobId, projectId: project.id });
   await report.log(jobId, 'info', summary);
-}
-
-function firstUnique(colTypes: Map<string, string>, mapping: Record<string, string>): string | undefined {
-  // Prefer customer_code-style business keys if present in the mapping.
-  for (const tgt of Object.values(mapping)) if (/code|key|email/i.test(tgt) && colTypes.has(tgt)) return tgt;
-  return undefined;
 }

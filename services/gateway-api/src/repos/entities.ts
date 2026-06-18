@@ -40,7 +40,10 @@ export async function upsertEntity(i: UpsertEntityInput): Promise<EntityRow> {
      ON CONFLICT (project_id, name) DO UPDATE
        SET target_table = EXCLUDED.target_table,
            primary_key  = EXCLUDED.primary_key,
-           rule_set_id  = EXCLUDED.rule_set_id,
+           -- Preserve an already-attached rule set when the caller doesn't pass
+           -- one (e.g. the Import page, which only sends a mapping). Otherwise a
+           -- re-import would silently drop the entity's validation rules.
+           rule_set_id  = COALESCE(EXCLUDED.rule_set_id, project_entities.rule_set_id),
            mapping_jsonb = EXCLUDED.mapping_jsonb
      RETURNING id, project_id, name, target_table, primary_key, rule_set_id, mapping_jsonb`,
     [i.projectId, i.name, i.targetTable, i.primaryKey, i.ruleSetId ?? null, JSON.stringify(i.mapping)],

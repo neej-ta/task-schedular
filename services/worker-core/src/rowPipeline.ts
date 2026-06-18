@@ -110,3 +110,14 @@ export function sourceFieldFor(mapping: Record<string, string>, targetCol: strin
   for (const [src, tgt] of Object.entries(mapping)) if (tgt === targetCol) return src;
   return undefined;
 }
+
+/**
+ * Default match column for key-based jobs (bulk_update / bulk_delete): prefer a
+ * mapped business key (customer_code-style `*_code`/`*_key`/`email`) that also
+ * exists on the target, before any caller falls back to the surrogate PK — which
+ * the source file almost never carries a mapping for.
+ */
+export function firstUnique(colTypes: Map<string, string>, mapping: Record<string, string>): string | undefined {
+  for (const tgt of Object.values(mapping)) if (/code|key|email/i.test(tgt) && colTypes.has(tgt)) return tgt;
+  return undefined;
+}

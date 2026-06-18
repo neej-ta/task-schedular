@@ -1,6 +1,6 @@
 import { getTargetPool, quoteIdent, introspectColumns, coerce } from '@conductor/targetdb';
 import { report, type JobContext } from '@conductor/worker-runtime';
-import { runRowJob, sourceFieldFor } from '../rowPipeline.js';
+import { runRowJob, sourceFieldFor, firstUnique } from '../rowPipeline.js';
 import { readRows } from '../source.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ export async function bulkDelete(ctx: JobContext): Promise<void> {
   const colTypes = await introspectColumns(pool, schema, entity.targetTable);
   const mapping = entity.mapping;
 
-  const matchCol = (persisted.matchOn as string) || entity.primaryKey;
+  const matchCol = (persisted.matchOn as string) || firstUnique(colTypes, mapping) || entity.primaryKey;
   const matchSrc = sourceFieldFor(mapping, matchCol);
   if (!matchSrc) throw new Error(`bulk_delete: no source field maps to match column '${matchCol}'`);
   const tbl = `${quoteIdent(schema)}.${quoteIdent(entity.targetTable)}`;
