@@ -5,6 +5,7 @@ import { isCancelled } from '@conductor/realtime';
 import { putObject, defaultBucket } from '@conductor/storage';
 import { report, JobCancelled, type JobContext } from '@conductor/worker-runtime';
 import { readRows } from '../source.js';
+import { writeRejectsXlsx } from '../rejectsXlsx.js';
 import { config } from '../config.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,7 +108,16 @@ export async function bulkImport(ctx: JobContext): Promise<void> {
     if (errorCount > 0) {
       try {
         await writeRejectsFile(jobId, records);
-        await report.log(jobId, 'info', 'wrote a downloadable file with every row marked OK/REJECTED + why — fix the rejected rows and re-import');
+        // Also a highlighted Excel (rejected cells filled red + _status/_reason)
+        // for interactive-sized files; very large imports keep just the CSV.
+        const xlsx = await writeRejectsXlsx(jobId, records, mapping);
+        await report.log(
+          jobId,
+          'info',
+          xlsx
+            ? 'wrote a downloadable CSV + highlighted Excel with every row marked OK/REJECTED + why — fix the rejected rows and re-import'
+            : 'wrote a downloadable CSV with every row marked OK/REJECTED + why (file too large for the highlighted Excel) — fix the rejected rows and re-import',
+        );
       } catch (err) {
         await report.log(jobId, 'warn', `could not write the rejected-rows file: ${(err as Error).message}`);
       }

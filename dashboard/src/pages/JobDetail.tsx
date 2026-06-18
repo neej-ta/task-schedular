@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ChevronDown, ChevronRight, Download } from 'lucide-react';
-import { api, fetchText } from '../api';
+import { api, fetchText, fetchBlob } from '../api';
 import { useAuth } from '../auth';
 import { useEventSource } from '../sse';
 import type { Job, JobChunk, JobErrorRow, JobEventRow, JobLog, Progress } from '../types';
@@ -240,11 +240,26 @@ function Errors({ jobId, errors }: { jobId: string; errors: JobErrorRow[] }) {
       download(body, `task-${jobId.slice(0, 8)}-skipped-rows.csv`);
     }
   }
+  // Excel variant: the whole file with each REJECTED row's failing cell(s)
+  // highlighted red + a _status/_reason pair, so the user sees exactly which
+  // field broke its project rule, fixes it in place, and re-imports.
+  async function exportXlsx() {
+    const blob = await fetchBlob(`/jobs/${jobId}/rejects.xlsx`);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `task-${jobId.slice(0, 8)}-rows.xlsx`;
+    a.click();
+  }
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5">
         <h3 className="text-sm font-semibold text-slate-700">Skipped rows {errors.length > 0 && <span className="text-slate-400">({errors.length})</span>}</h3>
-        {errors.length > 0 && <Button variant="ghost" onClick={exportCsv}><Download className="h-3.5 w-3.5" /> Download to fix</Button>}
+        {errors.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" onClick={exportCsv}><Download className="h-3.5 w-3.5" /> CSV</Button>
+            <Button variant="ghost" onClick={exportXlsx}><Download className="h-3.5 w-3.5" /> Excel (highlighted)</Button>
+          </div>
+        )}
       </div>
       <div className="h-64 overflow-auto">
         {errors.length === 0 ? (

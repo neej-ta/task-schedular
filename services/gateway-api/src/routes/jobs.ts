@@ -4,7 +4,7 @@ import { JobTypeSchema } from '@conductor/contracts';
 import { enqueueJob } from '@conductor/core';
 import { query } from '@conductor/db';
 import { getProgress, requestCancel, publishActivity } from '@conductor/realtime';
-import { getObjectText, defaultBucket } from '@conductor/storage';
+import { getObjectText, getObjectStream, defaultBucket } from '@conductor/storage';
 import { listJobs, getJob } from '../repos/jobs.js';
 import { audit } from '../audit.js';
 
@@ -111,6 +111,23 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
       reply.header('Content-Type', 'text/csv; charset=utf-8');
       reply.header('Content-Disposition', `attachment; filename="task-${id.slice(0, 8)}-rows.csv"`);
       return csv;
+    } catch {
+      return reply.code(404).send({ error: 'no rejected-rows file for this job (it had no rejected rows)' });
+    }
+  });
+
+  // Same annotated file as an Excel workbook with the offending cells highlighted
+  // red (+ _status/_reason columns) — written by the worker when an import has
+  // rejected rows. Streamed as a binary download; auth/RBAC apply via the gateway.
+  app.get('/jobs/:id/rejects.xlsx', viewer, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const job = await getJob(id);
+    if (!job) return reply.code(404).send({ error: 'not found' });
+    try {
+      const stream = await getObjectStream(defaultBucket(), `rejects/${id}.xlsx`);
+      reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      reply.header('Content-Disposition', `attachment; filename="task-${id.slice(0, 8)}-rows.xlsx"`);
+      return reply.send(stream);
     } catch {
       return reply.code(404).send({ error: 'no rejected-rows file for this job (it had no rejected rows)' });
     }

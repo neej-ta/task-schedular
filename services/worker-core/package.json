@@ -19,6 +19,7 @@
     "@conductor/telemetry": "*",
     "@conductor/worker-runtime": "*",
     "csv-parse": "^5.6.0",
+    "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.8.0",
     "pg": "^8.13.1"
   },

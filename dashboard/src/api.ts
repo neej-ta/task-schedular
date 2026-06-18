@@ -63,6 +63,19 @@ export async function fetchText(path: string): Promise<string> {
   return res.text();
 }
 
+/** Fetch a binary response (e.g. an .xlsx download) as a Blob, with auth. */
+export async function fetchBlob(path: string): Promise<Blob> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    if (res.status === 401) setToken(null);
+    throw new ApiError(res.status, res.statusText);
+  }
+  return res.blob();
+}
+
 /** Multipart upload — lets the browser set the multipart boundary itself. */
 export async function uploadFile<T = unknown>(path: string, file: File): Promise<T> {
   const fd = new FormData();
