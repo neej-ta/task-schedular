@@ -1,6 +1,5 @@
-import type pg from 'pg';
 import { evaluateRow, type Row } from '@conductor/rule-engine';
-import { getTargetPool } from '@conductor/targetdb';
+import { getTargetDb, type TargetDb } from '@conductor/targetdb';
 import { isCancelled } from '@conductor/realtime';
 import { report, JobCancelled, type JobContext } from '@conductor/worker-runtime';
 import { readRows } from './source.js';
@@ -14,7 +13,7 @@ export type PerRow = (args: {
   rowNumber: number;
   source: Row;
   value: Row;
-  pool: pg.Pool;
+  db: TargetDb;
   ctx: JobContext;
 }) => Promise<RowOutcome>;
 
@@ -35,7 +34,7 @@ export async function runRowJob(
 
   const records = await readRows(ctx);
   const total = records.length;
-  const pool = await getTargetPool(project);
+  const db = await getTargetDb(project);
 
   const chunkSize = envelope.options.chunkSize;
   const chunkCount = Math.max(1, Math.ceil(total / chunkSize));
@@ -78,7 +77,7 @@ export async function runRowJob(
             }
             value = ev.value;
           }
-          const out = await perRow({ rowNumber, source, value, pool, ctx });
+          const out = await perRow({ rowNumber, source, value, db, ctx });
           if (out.processed) cProc++;
           if (out.error) {
             await report.recordRowError(jobId, batchId, rowNumber, out.error.field ?? null, out.error.rule, out.error.message, source);

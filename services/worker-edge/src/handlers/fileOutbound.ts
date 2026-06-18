@@ -1,4 +1,4 @@
-import { getTargetPool, quoteIdent, introspectColumns } from '@conductor/targetdb';
+import { getTargetDb } from '@conductor/targetdb';
 import { putObject, parseS3Url, defaultBucket } from '@conductor/storage';
 import { report, type JobContext } from '@conductor/worker-runtime';
 import { toCsv, toJson } from '../serialize.js';
@@ -8,17 +8,17 @@ import { toCsv, toJson } from '../serialize.js';
 export async function fileOutbound(ctx: JobContext): Promise<void> {
   const { job, project, entity, envelope } = ctx;
   const jobId = job.id;
-  const pool = await getTargetPool(project);
+  const db = await getTargetDb(project);
   const schema = project.schema || 'public';
   const mapping = entity.mapping;
   const targetCols = Object.values(mapping);
-  const colTypes = await introspectColumns(pool, schema, entity.targetTable);
-  const softFilter = colTypes.has('deleted_at') ? 'WHERE deleted_at IS NULL' : '';
+  const colTypes = await db.introspectColumns(schema, entity.targetTable);
+  const softFilter = colTypes.has('deleted_at') ? `WHERE ${db.ident('deleted_at')} IS NULL` : '';
 
   await report.event('job.started', 'file_outbound querying target', { jobId, projectId: project.id });
-  const sql = `SELECT ${targetCols.map(quoteIdent).join(', ')}
-                 FROM ${quoteIdent(schema)}.${quoteIdent(entity.targetTable)} ${softFilter}`;
-  const { rows } = await pool.query<Record<string, unknown>>(sql);
+  const sql = `SELECT ${targetCols.map((c) => db.ident(c)).join(', ')}
+                 FROM ${db.qualify(schema, entity.targetTable)} ${softFilter}`;
+  const { rows } = await db.query<Record<string, unknown>>(sql);
   await report.log(jobId, 'info', `queried ${rows.length} rows from ${entity.targetTable}`);
 
   const dest = envelope.destination as { location?: string; options?: Record<string, unknown> };

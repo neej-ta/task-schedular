@@ -1,4 +1,4 @@
-import { getTargetPool, quoteIdent, introspectColumns } from '@conductor/targetdb';
+import { getTargetDb } from '@conductor/targetdb';
 import { report, type JobContext } from '@conductor/worker-runtime';
 import { postJson } from '../http.js';
 import { rowToSource } from '../serialize.js';
@@ -15,15 +15,15 @@ export async function restPush(ctx: JobContext): Promise<void> {
   const batchSize = Number(dest.options?.batchSize ?? 50);
   const token = dest.options?.token as string | undefined;
 
-  const pool = await getTargetPool(project);
+  const db = await getTargetDb(project);
   const schema = project.schema || 'public';
   const mapping = entity.mapping;
   const targetCols = Object.values(mapping);
-  const colTypes = await introspectColumns(pool, schema, entity.targetTable);
-  const softFilter = colTypes.has('deleted_at') ? 'WHERE deleted_at IS NULL' : '';
+  const colTypes = await db.introspectColumns(schema, entity.targetTable);
+  const softFilter = colTypes.has('deleted_at') ? `WHERE ${db.ident('deleted_at')} IS NULL` : '';
 
-  const { rows } = await pool.query<Record<string, unknown>>(
-    `SELECT ${targetCols.map(quoteIdent).join(', ')} FROM ${quoteIdent(schema)}.${quoteIdent(entity.targetTable)} ${softFilter}`,
+  const { rows } = await db.query<Record<string, unknown>>(
+    `SELECT ${targetCols.map((c) => db.ident(c)).join(', ')} FROM ${db.qualify(schema, entity.targetTable)} ${softFilter}`,
   );
   await report.event('job.started', `rest_push ${rows.length} rows → ${url}`, { jobId, projectId: project.id });
 

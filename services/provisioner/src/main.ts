@@ -14,9 +14,14 @@ async function main() {
   assertConfig();
 
   if (!config.enabled) {
-    // Inert: stay alive (so a supervisor doesn't treat exit as a crash) but do nothing.
+    // Inert: stay alive (so a supervisor doesn't treat exit as a crash) but do
+    // nothing. A registered signal handler and an unsettled Promise do NOT keep
+    // the Node event loop alive on their own — a ref'd timer does, so without it
+    // the process would exit cleanly and trip the supervisor's fail-loud teardown.
     log('PROVISIONER_ENABLED is not true — idling, no containers will be managed');
+    const keepAlive = setInterval(() => {}, 1 << 30);
     await new Promise<void>((resolve) => process.on('SIGTERM', () => resolve()));
+    clearInterval(keepAlive);
     return;
   }
 

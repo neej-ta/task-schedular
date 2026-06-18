@@ -77,6 +77,55 @@ services:
       - seaweeddata:/data
       - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
 
+  # ── Optional SQL Server target (verification of the MSSQL execution path) ───
+  # Not part of the default 5-container stack — start it explicitly with the
+  # `mssql` profile:  docker compose --profile mssql up -d sqlserver
+  # Then run the adapter integration test from the host:  npm run itest:mssql
+  # The worker can also target it directly (it's in SSRF_ALLOWLIST as `sqlserver`).
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: ['mssql']
+    environment:
+      ACCEPT_EULA: 'Y'
+      MSSQL_SA_PASSWORD: 'Conductor_dev_pw1'
+      MSSQL_PID: 'Developer'
+    ports:
+      - '1433:1433'
+    volumes:
+      - mssqldata:/var/opt/mssql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  # ── Optional MySQL target (verification of the MySQL execution path) ────────
+  # Not part of the default 5-container stack — start it explicitly with the
+  # `mysql` profile:  docker compose --profile mysql up -d mysql
+  # Then run the adapter integration test from the host:  npm run itest:mysql
+  # The worker can also target it directly (it's in SSRF_ALLOWLIST as `mysql`).
+  mysql:
+    image: mysql:8
+    profiles: ['mysql']
+    environment:
+      MYSQL_ROOT_PASSWORD: conductor_dev_pw
+      MYSQL_DATABASE: demo
+      MYSQL_USER: demo
+      MYSQL_PASSWORD: demo_dev_pw
+    ports:
+      - '3306:3306'
+    volumes:
+      - mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -u root -p"$$MYSQL_ROOT_PASSWORD" || exit 1']
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
   # ── Application (all backend services + dashboard, one image) ───────────────
   # Scale note: this image runs the scheduler as a single leader instance; the
   # advisory-lock leader election still works, it just never contends.
@@ -98,8 +147,8 @@ services:
       JWT_EXPIRES_IN: 12h
       CONDUCTOR_MASTER_KEY: Y29uZHVjdG9yLWRldi1tYXN0ZXIta2V5LTMyYnl0ZXM=
       CONDUCTOR_MASTER_KEY_ID: dev-local-v1
-      # postgres = demo target DB host; 127.0.0.1/32 = folded-in mock-REST.
-      SSRF_ALLOWLIST: postgres,127.0.0.1/32
+      # postgres / sqlserver / mysql = demo target DB hosts; 127.0.0.1/32 = mock-REST.
+      SSRF_ALLOWLIST: postgres,sqlserver,mysql,127.0.0.1/32
       # Demo target DB now lives on the main postgres instance (separate db/user).
       DEMO_TARGET_HOST: postgres
       DEMO_TARGET_PORT: '5432'
@@ -163,3 +212,5 @@ services:
 volumes:
   pgdata:
   seaweeddata:
+  mssqldata:
+  mysqldata:

@@ -1,20 +1,21 @@
-import { getTargetPool, quoteIdent, introspectColumns, coerce } from '@conductor/targetdb';
+import { getTargetDb, coerce } from '@conductor/targetdb';
 import { report, type JobContext } from '@conductor/worker-runtime';
 import { runRowJob, sourceFieldFor, firstUnique } from '../rowPipeline.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // bulk_update (spec §11): match on a key, write only the mapped fields, with
 // OPTIMISTIC CONCURRENCY when an `optimisticColumn` (e.g. updated_at) is given.
-// Rules still validate each row. UPDATE is naturally idempotent.
+// Rules still validate each row. UPDATE is naturally idempotent. Provider-neutral
+// (PostgreSQL / SQL Server) via the @conductor/targetdb dialect API.
 //   options: { matchOn?: targetCol, optimisticColumn?: targetCol }
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function bulkUpdate(ctx: JobContext): Promise<void> {
-  const { job, project, entity, envelope } = ctx;
+  const { job, project, entity } = ctx;
   const jobId = job.id;
-  const pool = await getTargetPool(project);
+  const db = await getTargetDb(project);
   const schema = project.schema || 'public';
-  const colTypes = await introspectColumns(pool, schema, entity.targetTable);
+  const colTypes = await db.introspectColumns(schema, entity.targetTable);
   const mapping = entity.mapping;
 
   const persistedOpts = (job.parameters_jsonb.options ?? {}) as Record<string, unknown>;
@@ -29,31 +30,27 @@ export async function bulkUpdate(ctx: JobContext): Promise<void> {
   if (writeSrcFields.length === 0 && !hasUpdatedAt) {
     throw new Error(`bulk_update: nothing to update (only the match column '${matchCol}' is mapped)`);
   }
-  const tbl = `${quoteIdent(schema)}.${quoteIdent(entity.targetTable)}`;
+  const tbl = db.qualify(schema, entity.targetTable);
 
-  const result = await runRowJob(ctx, async ({ source, value, pool: p }) => {
-    const setCols = writeSrcFields.map((sf) => mapping[sf]!);
-    const setSql = setCols.map((c, i) => `${quoteIdent(c)} = $${i + 1}`);
+  const result = await runRowJob(ctx, async ({ source: _source, value, db }) => {
+    const setSql = writeSrcFields.map((sf) => `${db.ident(mapping[sf]!)} = ?`);
     const params: unknown[] = writeSrcFields.map((sf) => coerce(value[sf], colTypes.get(mapping[sf]!)));
-    if (hasUpdatedAt) setSql.push(`updated_at = now()`);
+    if (hasUpdatedAt) setSql.push(`${db.ident('updated_at')} = ${db.now()}`);
 
-    let i = params.length;
-    let where = `${quoteIdent(matchCol)} = $${++i}`;
+    let where = `${db.ident(matchCol)} = ?`;
     params.push(coerce(value[matchSrc], colTypes.get(matchCol)));
     if (optimisticCol && value[`_${optimisticCol}`] !== undefined) {
-      where += ` AND ${quoteIdent(optimisticCol)} = $${++i}`;
+      where += ` AND ${db.ident(optimisticCol)} = ?`;
       params.push(coerce(value[`_${optimisticCol}`], colTypes.get(optimisticCol)));
     }
 
-    const res = await p.query(`UPDATE ${tbl} SET ${setSql.join(', ')} WHERE ${where}`, params);
-    if ((res.rowCount ?? 0) > 0) return { processed: true };
+    const res = await db.query(`UPDATE ${tbl} SET ${setSql.join(', ')} WHERE ${where}`, params);
+    if (res.rowCount > 0) return { processed: true };
 
     // Distinguish optimistic conflict from not-found.
     if (optimisticCol && value[`_${optimisticCol}`] !== undefined) {
-      const exists = await p.query(`SELECT 1 FROM ${tbl} WHERE ${quoteIdent(matchCol)} = $1 LIMIT 1`, [
-        coerce(value[matchSrc], colTypes.get(matchCol)),
-      ]);
-      if ((exists.rowCount ?? 0) > 0) {
+      const exists = await db.existsOne(tbl, `${db.ident(matchCol)} = ?`, [coerce(value[matchSrc], colTypes.get(matchCol))]);
+      if (exists) {
         return { processed: false, error: { field: optimisticCol, rule: 'optimistic_conflict', message: 'row changed since read' } };
       }
     }

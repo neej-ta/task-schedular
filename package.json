@@ -13,8 +13,10 @@
     "seed": "npm run seed -w @conductor/gateway-api",
     "gateway": "npm run dev -w @conductor/gateway-api",
     "dashboard": "npm run dev -w @conductor/dashboard",
-    "typecheck": "tsc -b --pretty",
-    "test": "npm run test --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "itest:mssql": "node --test --import tsx scripts/mssql.itest.ts",
+    "itest:mysql": "node --test --import tsx scripts/mysql.itest.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

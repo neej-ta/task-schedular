@@ -8,8 +8,14 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "test": "node --test --import tsx ./src/*.test.ts",
+    "typecheck": "tsc -b"
+  },
   "dependencies": {
     "@conductor/security": "*",
+    "mssql": "^11.0.1",
+    "mysql2": "^3.11.0",
     "pg": "^8.13.1"
   },
   "devDependencies": {

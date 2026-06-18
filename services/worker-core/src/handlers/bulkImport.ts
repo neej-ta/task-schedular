@@ -1,7 +1,6 @@
-import type pg from 'pg';
 import { query } from '@conductor/db';
 import { evaluateRow, extractStatefulRules, type Row } from '@conductor/rule-engine';
-import { getTargetPool, quoteIdent, introspectColumns, coerce } from '@conductor/targetdb';
+import { getTargetDb, type TargetDb, coerce } from '@conductor/targetdb';
 import { isCancelled } from '@conductor/realtime';
 import { putObject, defaultBucket } from '@conductor/storage';
 import { report, JobCancelled, type JobContext } from '@conductor/worker-runtime';
@@ -11,9 +10,12 @@ import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared import pipeline (spec §11) for bulk_import / bulk_insert / xml_integration:
 //   read (csv|json|xml) → map → validate (in-process rules) → transform →
-//   STAGING table → promote (idempotent ON CONFLICT DO NOTHING).
+//   STAGING table → promote (idempotent, dialect-specific).
 // Uniqueness is DB-enforced on staging; concurrent chunks race the DB, not app
 // code (spec §5.5, §13). Re-runs/redeliveries never duplicate (idempotent promote).
+// Provider-neutral (PostgreSQL / SQL Server) via the @conductor/targetdb dialect
+// API; the CONTROL-plane queries (job_errors, project_entities, rejects file)
+// always run against Conductor's own PostgreSQL via @conductor/db.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function bulkImport(ctx: JobContext): Promise<void> {
@@ -33,16 +35,16 @@ export async function bulkImport(ctx: JobContext): Promise<void> {
   const { uniqueFields, lookups } = extractStatefulRules(ruleSet);
   const uniqueTargetCols = uniqueFields.map((f) => mapping[f]).filter(Boolean) as string[];
 
-  const pool = await getTargetPool(project);
+  const db = await getTargetDb(project);
   const schema = project.schema || 'public';
-  const colTypes = await introspectColumns(pool, schema, entity.targetTable);
+  const colTypes = await db.introspectColumns(schema, entity.targetTable);
 
   const staging = `conductor_stg_${jobId.replace(/-/g, '')}`;
 
   try {
     // createStaging is INSIDE the try so the finally drops the table even if
     // index creation fails midway (review M8).
-    await createStaging(pool, schema, staging, targetCols, colTypes, uniqueTargetCols);
+    await db.createStaging(schema, staging, targetCols, colTypes, uniqueTargetCols);
     await report.log(jobId, 'info', `created staging ${staging}; ${totalRows} rows, chunkSize ${opts.chunkSize}`);
     const chunkSize = opts.chunkSize;
     const chunkCount = Math.max(1, Math.ceil(totalRows / chunkSize));
@@ -64,7 +66,7 @@ export async function bulkImport(ctx: JobContext): Promise<void> {
           return;
         }
         const chunk = chunks[cursor++]!;
-        await processChunk(ctx, pool, schema, staging, batchId, chunk, records, mapping, targetCols, colTypes, uniqueTargetCols);
+        await processChunk(ctx, db, schema, staging, batchId, chunk, records, mapping, targetCols, colTypes, uniqueTargetCols);
       }
     });
     await Promise.all(workers);
@@ -80,32 +82,12 @@ export async function bulkImport(ctx: JobContext): Promise<void> {
     // rows whose value has no referent are recorded as row errors and removed
     // from staging so they are never promoted.
     if (lookups.length) {
-      await enforceLookups(ctx, pool, schema, staging, batchId, lookups, mapping);
+      await enforceLookups(ctx, db, schema, staging, batchId, lookups, mapping);
     }
 
     let promoted = 0;
     if (!dryRun) {
-      const cols = targetCols.map(quoteIdent).join(', ');
-      // The promote is a single large INSERT…SELECT — expected to be long for
-      // big jobs. Exempt it from the per-project statement_timeout (which guards
-      // ad-hoc/validation queries) via SET LOCAL inside a transaction.
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query('SET LOCAL statement_timeout = 0');
-        const res = await client.query(
-          `INSERT INTO ${quoteIdent(schema)}.${quoteIdent(entity.targetTable)} (${cols})
-           SELECT ${cols} FROM ${quoteIdent(schema)}.${quoteIdent(staging)}
-           ON CONFLICT DO NOTHING`,
-        );
-        await client.query('COMMIT');
-        promoted = res.rowCount ?? 0;
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      } finally {
-        client.release();
-      }
+      promoted = await db.promote(schema, entity.targetTable, staging, targetCols, uniqueTargetCols);
       await report.log(jobId, 'info', `promoted ${promoted} rows into ${entity.targetTable}`);
     } else {
       await report.log(jobId, 'info', 'dry-run: skipping promote');
@@ -139,13 +121,13 @@ export async function bulkImport(ctx: JobContext): Promise<void> {
     await report.event('job.completed', summary, { jobId, projectId: project.id });
     await report.log(jobId, 'info', summary);
   } finally {
-    await pool.query(`DROP TABLE IF EXISTS ${quoteIdent(schema)}.${quoteIdent(staging)}`).catch(() => {});
+    await db.dropStagingIfExists(schema, staging).catch(() => {});
   }
 }
 
 async function processChunk(
   ctx: JobContext,
-  pool: pg.Pool,
+  db: TargetDb,
   schema: string,
   staging: string,
   batchId: string,
@@ -164,8 +146,8 @@ async function processChunk(
   let errors = 0;
   const sourceFields = Object.keys(mapping); // aligned with targetCols
   const colCount = targetCols.length + 1; // + row_number
-  const colsSql = ['row_number', ...targetCols].map(quoteIdent).join(', ');
-  const insertPrefix = `INSERT INTO ${quoteIdent(schema)}.${quoteIdent(staging)} (${colsSql})`;
+  const colsSql = ['row_number', ...targetCols].map((c) => db.ident(c)).join(', ');
+  const insertPrefix = `INSERT INTO ${db.qualify(schema, staging)} (${colsSql})`;
 
   try {
     // Phase 1: validate + transform in-process; collect rows that pass.
@@ -185,32 +167,30 @@ async function processChunk(
     // Phase 2: bulk multi-row INSERT in sub-batches (fast path). On a
     // constraint/data error, fall back to row-by-row for that sub-batch to
     // attribute the offending rows (keeps parallel-uniqueness/error semantics).
-    // Cap the sub-batch so tuples × columns stays well under PG's 65535 bind
-    // parameter limit (review H3).
-    const SUB = Math.max(1, Math.min(1000, Math.floor(60000 / colCount)));
+    // Cap the sub-batch so tuples × columns stays under the dialect bind-param
+    // limit (PG 65535 / SQL Server 2100) (review H3).
+    const SUB = Math.max(1, Math.min(1000, Math.floor((db.maxBindParams - 1) / colCount)));
     for (let i = 0; i < valid.length; i += SUB) {
       const slice = valid.slice(i, i + SUB);
       try {
         const params: unknown[] = [];
-        const tuples = slice.map((row, ri) => {
+        const tuples = slice.map((row) => {
           row.values.forEach((v) => params.push(v));
-          return `(${row.values.map((_, ci) => `$${ri * colCount + ci + 1}`).join(',')})`;
+          return `(${row.values.map(() => '?').join(',')})`;
         });
-        await pool.query(`${insertPrefix} VALUES ${tuples.join(',')}`, params);
+        await db.query(`${insertPrefix} VALUES ${tuples.join(',')}`, params);
         processed += slice.length;
       } catch (err) {
-        const code = (err as { code?: string }).code ?? '';
-        if (code !== '23505' && !code.startsWith('22') && !code.startsWith('23')) throw err;
+        if (!db.isUniqueViolation(err) && !db.isDataError(err)) throw err;
         for (const row of slice) {
           try {
-            await pool.query(`${insertPrefix} VALUES (${row.values.map((_, ci) => `$${ci + 1}`).join(',')})`, row.values);
+            await db.query(`${insertPrefix} VALUES (${row.values.map(() => '?').join(',')})`, row.values);
             processed++;
           } catch (e) {
-            const c = (e as { code?: string }).code ?? '';
-            if (c === '23505') {
+            if (db.isUniqueViolation(e)) {
               await report.recordRowError(jobId, batchId, row.rowNumber, uniqueTargetCols.join(',') || null, 'unique', 'duplicate business key (DB-enforced)', row.source);
               errors++;
-            } else if (c.startsWith('22') || c.startsWith('23')) {
+            } else if (db.isDataError(e)) {
               await report.recordRowError(jobId, batchId, row.rowNumber, null, 'data_error', (e as Error).message, row.source);
               errors++;
             } else {
@@ -229,29 +209,6 @@ async function processChunk(
   }
 }
 
-async function createStaging(
-  pool: pg.Pool,
-  schema: string,
-  staging: string,
-  targetCols: string[],
-  colTypes: Map<string, string>,
-  uniqueTargetCols: string[],
-): Promise<void> {
-  await pool.query(`DROP TABLE IF EXISTS ${quoteIdent(schema)}.${quoteIdent(staging)}`);
-  const colDefs = targetCols.map((c) => `${quoteIdent(c)} ${colTypes.get(c) ?? 'text'}`).join(', ');
-  await pool.query(
-    `CREATE UNLOGGED TABLE ${quoteIdent(schema)}.${quoteIdent(staging)} (
-       row_number bigint PRIMARY KEY,
-       ${colDefs}
-     )`,
-  );
-  for (const col of uniqueTargetCols) {
-    await pool.query(
-      `CREATE UNIQUE INDEX ${quoteIdent(`uq_${staging}_${col}`)} ON ${quoteIdent(schema)}.${quoteIdent(staging)} (${quoteIdent(col)})`,
-    );
-  }
-}
-
 /**
  * Enforce `lookup` (referential-integrity) rules against the target DB.
  *
@@ -265,7 +222,7 @@ async function createStaging(
  */
 async function enforceLookups(
   ctx: JobContext,
-  pool: pg.Pool,
+  db: TargetDb,
   schema: string,
   staging: string,
   batchId: string,
@@ -278,6 +235,7 @@ async function enforceLookups(
     if (!stagingCol) {
       throw new Error(`lookup rule on field '${lk.field}' cannot be enforced: the field is not mapped to a target column`);
     }
+    // project_entities lives in the CONTROL DB (always PostgreSQL).
     const { rows: refRows } = await query<{ target_table: string; primary_key: string }>(
       `SELECT target_table, primary_key FROM project_entities WHERE project_id=$1 AND name=$2`,
       [ctx.job.project_id, lk.entity],
@@ -287,29 +245,32 @@ async function enforceLookups(
       throw new Error(`lookup rule references entity '${lk.entity}', which is not configured for this project`);
     }
 
-    const sTbl = `${quoteIdent(schema)}.${quoteIdent(staging)}`;
-    const rTbl = `${quoteIdent(schema)}.${quoteIdent(ref.target_table)}`;
-    const sCol = quoteIdent(stagingCol);
-    const rKey = quoteIdent(ref.primary_key);
+    const sTbl = db.qualify(schema, staging);
+    const rTbl = db.qualify(schema, ref.target_table);
+    const sCol = db.ident(stagingCol);
+    const rKey = db.ident(ref.primary_key);
     // Anti-join: staged rows whose (non-null) value has no referent. Compare as
     // text so a type mismatch between the two columns can't error the query.
-    const { rows: missing } = await pool.query<{ row_number: string; val: unknown }>(
-      `SELECT s.row_number, s.${sCol} AS val
+    // `row_number` is a reserved word in some engines (MySQL) — quote it, and
+    // alias to a safe name so the returned key is stable across dialects.
+    const rnCol = db.ident('row_number');
+    const { rows: missing } = await db.query<{ rn: string | number; val: unknown }>(
+      `SELECT s.${rnCol} AS rn, s.${sCol} AS val
          FROM ${sTbl} s
-         LEFT JOIN ${rTbl} r ON r.${rKey}::text = s.${sCol}::text
+         LEFT JOIN ${rTbl} r ON ${db.castText(`r.${rKey}`)} = ${db.castText(`s.${sCol}`)}
         WHERE s.${sCol} IS NOT NULL AND r.${rKey} IS NULL`,
     );
     if (missing.length === 0) continue;
 
     for (const m of missing) {
       await report.recordRowError(
-        jobId, batchId, Number(m.row_number), lk.field, 'lookup',
+        jobId, batchId, Number(m.rn), lk.field, 'lookup',
         `value '${String(m.val)}' not found in ${lk.entity}`,
         { [stagingCol]: m.val },
       );
     }
     await report.log(jobId, 'info', `lookup ${lk.field} → ${lk.entity}: ${missing.length} unmatched row(s) rejected`);
-    await pool.query(`DELETE FROM ${sTbl} WHERE row_number = ANY($1::bigint[])`, [missing.map((m) => Number(m.row_number))]);
+    await db.deleteStagingRows(schema, staging, missing.map((m) => Number(m.rn)));
   }
 }
 

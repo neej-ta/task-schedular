@@ -275,20 +275,39 @@ The demo seeds one definition per handler; **Run now** any of them from the
 | `rest_pull`       | edge | Paginate a REST API → enqueue inserts |
 | `rest_push`       | edge | Batch POST rows to a REST API with backoff |
 
+### Target databases
+
+Every DB job type runs against a **PostgreSQL, SQL Server, or MySQL** target —
+chosen per project by `projects.provider` — through the dialect-aware
+`@conductor/targetdb` adapter (placeholders, identifier quoting, idempotent
+promote, staging, and error classification are all dialect-specific behind one
+interface). Because target backends are reached over a direct DB connection (any
+of the three) or plain HTTP (`rest_pull`/`rest_push`), the target project's own
+backend language — Node, .NET, anything — is irrelevant.
+
+Optional SQL Server / MySQL containers (compose `mssql` / `mysql` profiles) back
+end-to-end adapter tests:
+
+```bash
+docker compose --profile mssql up -d sqlserver     # wait until healthy
+npm run itest:mssql                                # 6 cases against real SQL Server
+
+docker compose --profile mysql up -d mysql         # wait until healthy
+npm run itest:mysql                                # 6 cases against real MySQL
+```
+
 ---
 
 ## Testing & type-checking
 
 ```bash
-npm test                          # runs workspace tests (--workspaces --if-present)
+npm test          # workspace unit tests (--workspaces --if-present)
+npm run typecheck # type-checks every workspace
 ```
 
-For type-checking, run it **per workspace** rather than the root `tsc -b`
-(the root project-references build is currently broken):
-
-```bash
-npm run typecheck --workspaces --if-present
-```
+`npm run typecheck` runs each workspace's check (`--workspaces --if-present`);
+the target-DB SQL Server integration test (`npm run itest:mssql`) is separate
+and needs the `mssql`-profile container up.
 
 ---
 
