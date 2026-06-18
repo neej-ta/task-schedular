@@ -53,6 +53,16 @@ const SERVICES = [
     args: [`${ROOT}/deploy/mock-rest/server.mjs`],
     env: { PORT: '4000', RECORDS: '7' },
   },
+  {
+    // Per-project isolation provisioner (M7). INERT unless PROVISIONER_ENABLED=true
+    // (it idles rather than exiting, so it doesn't trip the fail-loud teardown).
+    // When enabled, it manages a dedicated worker container per dedicated project
+    // via the Docker socket (must be mounted — see docker-compose.yml).
+    name: 'provisioner',
+    cwd: `${ROOT}/services/provisioner`,
+    args: tsxArgs('services/provisioner/src/main.ts'),
+    env: {},
+  },
 ];
 
 const children = [];

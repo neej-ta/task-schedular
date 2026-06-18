@@ -1,12 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { ProviderSchema } from '@conductor/contracts';
+import { ProviderSchema, IsolationModeSchema } from '@conductor/contracts';
+import { provisionProjectSchema } from '@conductor/db';
 import {
   createProject,
   listProjects,
   getProject,
   updateProject,
   softDeleteProject,
+  setProjectIsolation,
   toView,
   revealSecret,
 } from '../repos/projects.js';
@@ -92,6 +94,33 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     if (!ok) return reply.code(404).send({ error: 'not found' });
     await audit(req.principal, 'project.delete', { target: id, projectId: id });
     return reply.code(204).send();
+  });
+
+  // Set isolation tier (Admin only). Promote → provision the per-project schema
+  // synchronously (so db_schema is set before any enqueue), mark dedicated; the
+  // provisioner then spins up the worker container. Demote → mark shared; the
+  // provisioner tears the container down (schema/data retained). M7 Phase 4.
+  app.post('/projects/:id/isolation', admin, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = z.object({ mode: IsolationModeSchema }).safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid body', details: parsed.error.flatten() });
+    }
+    const existing = await getProject(id);
+    if (!existing) return reply.code(404).send({ error: 'not found' });
+
+    if (parsed.data.mode === 'dedicated') {
+      // Idempotent: safe to re-provision an already-dedicated project.
+      await provisionProjectSchema(id);
+    }
+    const row = await setProjectIsolation(id, parsed.data.mode);
+    if (!row) return reply.code(404).send({ error: 'not found' });
+    await audit(req.principal, `project.isolation.${parsed.data.mode === 'dedicated' ? 'promote' : 'demote'}`, {
+      target: id,
+      projectId: id,
+      data: { mode: parsed.data.mode },
+    });
+    return { project: toView(row) };
   });
 
   // Test connection (Operator+). SSRF-guarded; decrypts in-memory; never returns secret.

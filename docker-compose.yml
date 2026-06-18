@@ -121,6 +121,20 @@ services:
       S3_BUCKET: uploads
       S3_REGION: us-east-1
       S3_FORCE_PATH_STYLE: 'true'
+      # ── Per-project isolation provisioner (M7) ──────────────────────────────
+      # OFF by default. Set PROVISIONER_ENABLED=true to let the provisioner spawn
+      # a dedicated worker container per `dedicated`-tier project via the mounted
+      # Docker socket. Dedicated workers join this stack's network and reuse the
+      # app image, running worker-core in WORKER_MODE=project.
+      # ⚠️ The Docker socket grants root-equivalent host access; in production
+      # front it with a scoped socket proxy (DESIGN-isolation-tiers.md, D55/D56).
+      PROVISIONER_ENABLED: ${PROVISIONER_ENABLED:-false}
+      DEDICATED_WORKER_IMAGE: conductor-app
+      DEDICATED_WORKER_NETWORK: conductor_default
+    volumes:
+      # Docker Engine API socket — used ONLY by the provisioner, and only when
+      # PROVISIONER_ENABLED=true. Remove this mount to hard-disable the feature.
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - '8080:8080' # gateway API + dashboard UI
       - '9101:9101' # worker-core /metrics

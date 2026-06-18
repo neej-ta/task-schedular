@@ -26,6 +26,16 @@ export interface RunnerConfig {
   heartbeatMs: number;
   handlers: Record<string, Handler>;
   log: (msg: string, extra?: Record<string, unknown>) => void;
+  /**
+   * Isolation tier this worker serves (M7). `shared` (default) drains the pooled
+   * `conductor.q.<type>` queues and enforces the per-project Redis semaphore.
+   * `project` is a dedicated worker bound to ONE project's per-project queues
+   * (`conductor.q.<type>.p.<projectId>`); it skips the semaphore (the dedicated
+   * container is itself the isolation) and routes retries back to those queues.
+   */
+  mode?: 'shared' | 'project';
+  /** Required when `mode === 'project'`: the project this worker is dedicated to. */
+  projectId?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,6 +56,11 @@ export class Runner {
   private limitCache = new Map<string, { limit: number; at: number }>();
 
   constructor(private readonly cfg: RunnerConfig) {}
+
+  /** The project to scope queues/routing to, or undefined for the shared pool. */
+  private routeProjectId(): string | undefined {
+    return this.cfg.mode === 'project' ? this.cfg.projectId : undefined;
+  }
 
   /** Per-project concurrency limit, cached briefly to avoid a query per message. */
   private async projectLimit(projectId: string): Promise<number> {
@@ -74,7 +89,7 @@ export class Runner {
     await this.channel.prefetch(this.cfg.prefetch);
 
     for (const type of Object.keys(this.cfg.handlers)) {
-      const queue = queueForType(type);
+      const queue = queueForType(type, this.routeProjectId());
       const { consumerTag } = await this.channel.consume(queue, (msg) => {
         if (!msg) return;
         this.onMessage(msg).catch((err) => {
@@ -120,14 +135,16 @@ export class Runner {
     // Per-project concurrency limit (spec §12). If the project is at its cap,
     // DEFER the job (re-publish with a short delay) instead of running it — this
     // protects the project's DB and gives fair throughput across projects.
+    // Dedicated (project-mode) workers skip the semaphore: the container is a
+    // single project's exclusive runtime, so its own prefetch is the limit.
     let acquired = false;
-    try {
+    if (this.cfg.mode !== 'project') try {
       const limit = await this.projectLimit(envelope.projectId);
       acquired = await acquireProjectSlot(envelope.projectId, limit);
       if (!acquired) {
         const delayMs = 1000 + Math.floor(Math.random() * 1500);
         try {
-          await publishWithConfirm(this.retryChannel!, routingKeyForType(envelope.type), envelope, {
+          await publishWithConfirm(this.retryChannel!, routingKeyForType(envelope.type, this.routeProjectId()), envelope, {
             delayMs,
             priority: Number(envelope.priority ?? 5),
             correlationId: String(envelope.correlationId ?? envelope.jobId),
@@ -212,7 +229,7 @@ export class Runner {
       const delayMs = this.cfg.retryBackoffBaseMs * 2 ** (attempt - 1);
       const next = { ...envelope, attempt: attempt + 1 };
       try {
-        await publishWithConfirm(this.retryChannel!, routingKeyForType(type), next, {
+        await publishWithConfirm(this.retryChannel!, routingKeyForType(type, this.routeProjectId()), next, {
           delayMs,
           priority: Number(envelope.priority ?? 5),
           correlationId: String(envelope.correlationId ?? jobId),

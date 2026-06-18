@@ -27,6 +27,9 @@ export interface Project {
   max_rows: number;
   concurrency_limit: number;
   allowlist_hosts: string[];
+  isolation_mode: 'shared' | 'dedicated';
+  db_schema: string | null;
+  container_state: 'none' | 'provisioning' | 'running' | 'stopping' | 'stopped' | 'error';
   created_at: string;
 }
 

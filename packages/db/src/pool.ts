@@ -15,11 +15,21 @@ export function getPool(): pg.Pool {
     if (!connectionString) {
       throw new Error('DATABASE_URL is not set');
     }
+    // A dedicated (project-mode) worker sets CONTROL_DB_SEARCH_PATH to
+    // `proj_<id>,public` so unqualified table names resolve to the project's
+    // execution schema (M7 Phase 2). Sent as a libpq startup option so it's in
+    // effect before the first query — no per-connection SET race. Validated to
+    // our generated shape to keep it injection-safe.
+    const searchPath = process.env.CONTROL_DB_SEARCH_PATH;
+    if (searchPath && !/^proj_[0-9a-f]{32},public$/.test(searchPath)) {
+      throw new Error(`CONTROL_DB_SEARCH_PATH must be "proj_<hex>,public", got: ${searchPath}`);
+    }
     pool = new Pool({
       connectionString,
       max: Number(process.env.CONTROL_DB_POOL_MAX ?? 10),
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
+      ...(searchPath ? { options: `-c search_path=${searchPath}` } : {}),
     });
     pool.on('error', (err) => {
       // Background pool errors must not crash the process.
