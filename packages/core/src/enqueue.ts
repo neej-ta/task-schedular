@@ -1,10 +1,38 @@
 import { randomUUID } from 'node:crypto';
-import { withTransaction } from '@conductor/db';
+import { query, withTransaction, assertSchemaName } from '@conductor/db';
 import {
   routingKeyForType,
+  type IsolationMode,
   type JobEnvelope,
   type JobType,
 } from '@conductor/contracts';
+
+// Per-project isolation tier (+ execution schema), cached briefly to avoid a
+// query per enqueue (the scheduler may fire many in a tick). The provisioner
+// flips this rarely, so a short TTL is safe; a stale 'shared' read at worst
+// routes one job to the shared pool during the promotion window.
+// M7 / DESIGN-isolation-tiers.md.
+interface Isolation {
+  mode: IsolationMode;
+  schema: string | null;
+}
+const isolationCache = new Map<string, { value: Isolation; at: number }>();
+const ISOLATION_TTL_MS = 30_000;
+
+async function projectIsolation(projectId: string): Promise<Isolation> {
+  const cached = isolationCache.get(projectId);
+  if (cached && Date.now() - cached.at < ISOLATION_TTL_MS) return cached.value;
+  const { rows } = await query<{ isolation_mode: IsolationMode; db_schema: string | null }>(
+    'SELECT isolation_mode, db_schema FROM projects WHERE id=$1',
+    [projectId],
+  );
+  const value: Isolation = {
+    mode: rows[0]?.isolation_mode ?? 'shared',
+    schema: rows[0]?.db_schema ?? null,
+  };
+  isolationCache.set(projectId, { value, at: Date.now() });
+  return value;
+}
 
 export interface EnqueueInput {
   projectId: string;
@@ -45,9 +73,24 @@ export async function enqueueJob(input: EnqueueInput): Promise<EnqueueResult> {
   const options = input.options ?? {};
   const mapping = input.mapping ?? {};
   const priority = input.priority ?? 5;
-  const routingKey = routingKeyForType(input.type);
+  // Dedicated-tier projects route to their own per-project queue; shared-tier
+  // projects use the pooled queue (today's behavior). The chosen key is stored
+  // in the outbox row, so the relay publishes — and retries re-publish — to the
+  // same queue regardless of which worker handles it.
+  const isolation = await projectIsolation(input.projectId);
+  const dedicated = isolation.mode === 'dedicated';
+  const routingKey = routingKeyForType(input.type, dedicated ? input.projectId : undefined);
+  // Dedicated jobs' execution rows live in the project's schema; only the outbox
+  // stays in `public`. Setting search_path for THIS transaction sends the jobs +
+  // job_events inserts to the project schema while outbox falls through to
+  // public — one transaction, one database (preserves the transactional outbox).
+  const useSchema = dedicated && isolation.schema ? isolation.schema : null;
+  if (useSchema) assertSchemaName(useSchema);
 
   return withTransaction(async (client) => {
+    if (useSchema) {
+      await client.query(`SET LOCAL search_path TO ${useSchema}, public`);
+    }
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO jobs
          (id, definition_id, project_id, entity, type, status, idempotency_key,

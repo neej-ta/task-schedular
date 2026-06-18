@@ -13,10 +13,16 @@ export const config = {
   httpRetries: Number(process.env.HTTP_RETRIES ?? 4),
   httpBackoffBaseMs: Number(process.env.HTTP_BACKOFF_BASE_MS ?? 500),
   logLevel: process.env.LOG_LEVEL ?? 'info',
+  // Isolation tier (M7) — see worker-core/config.ts.
+  mode: (process.env.WORKER_MODE === 'project' ? 'project' : 'shared') as 'shared' | 'project',
+  projectId: process.env.WORKER_PROJECT_ID,
 };
 
 export function assertConfig(): void {
   for (const v of ['DATABASE_URL', 'RABBITMQ_URL', 'CONDUCTOR_MASTER_KEY']) {
     if (!process.env[v]) throw new Error(`${v} is not set`);
+  }
+  if (config.mode === 'project' && !config.projectId) {
+    throw new Error('WORKER_MODE=project requires WORKER_PROJECT_ID');
   }
 }

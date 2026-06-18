@@ -1,10 +1,15 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Database, Plug, ShieldCheck } from 'lucide-react';
+import { Boxes, Database, Plug, ShieldCheck } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import type { Project, Provider, TestConnectionResult } from '../types';
 import { Button, Card, EmptyState, Field, Hint, Input, PageHeader, Pill, Select } from '../ui';
+
+// container_state → pill tone for the dedicated-worker badge.
+const CONTAINER_TONE: Record<Project['container_state'], 'green' | 'amber' | 'red' | 'slate'> = {
+  none: 'slate', provisioning: 'amber', running: 'green', stopping: 'amber', stopped: 'slate', error: 'red',
+};
 
 const DEFAULT_PORTS: Record<Provider, number> = { postgres: 5432, mysql: 3306, sqlserver: 1433 };
 const PROVIDER_LABEL: Record<Provider, string> = { postgres: 'PostgreSQL', mysql: 'MySQL', sqlserver: 'SQL Server' };
@@ -59,6 +64,14 @@ export function Projects() {
     onError: (e, id) => setResults((r) => ({ ...r, [id]: { ok: false, latencyMs: 0, error: e instanceof Error ? e.message : 'error' } })),
   });
 
+  // Promote/demote a connection's isolation tier (M7). Dedicated projects run on
+  // their own worker + schema; shared projects use the pooled runtime.
+  const setIsolation = useMutation({
+    mutationFn: ({ id, mode }: { id: string; mode: 'shared' | 'dedicated' }) =>
+      api<{ project: Project }>(`/projects/${id}/isolation`, { method: 'POST', body: { mode } }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+
   const isAdmin = user?.role === 'admin';
   const canTest = user?.role === 'admin' || user?.role === 'operator';
 
@@ -92,6 +105,11 @@ export function Projects() {
                       <span className="font-medium text-slate-800">{p.name}</span>
                       <Pill tone={p.environment === 'prod' ? 'amber' : 'blue'}>{p.environment === 'prod' ? 'Production' : 'Test'}</Pill>
                       {p.status !== 'active' && <Pill tone="slate">Disabled</Pill>}
+                      {p.isolation_mode === 'dedicated' && (
+                        <Pill tone={CONTAINER_TONE[p.container_state] ?? 'slate'} title={`Dedicated worker · ${p.container_state}`}>
+                          <Boxes className="h-3 w-3" /> Dedicated{p.container_state !== 'none' ? ` · ${p.container_state}` : ''}
+                        </Pill>
+                      )}
                     </div>
                     <div className="mt-0.5 text-xs text-slate-400">{PROVIDER_LABEL[p.provider]} · {p.username}@{p.host}:{p.port}/{p.database}</div>
                   </div>
@@ -102,6 +120,18 @@ export function Projects() {
                     ? <Pill tone="green"><ShieldCheck className="h-3 w-3" /> Connected · {res.latencyMs}ms</Pill>
                     : <Pill tone="red" title={res.error}>Can't connect</Pill>)}
                   {canTest && <Button variant="ghost" onClick={() => testConn.mutate(p.id)}>Test connection</Button>}
+                  {isAdmin && (
+                    <Button
+                      variant="ghost"
+                      disabled={setIsolation.isPending}
+                      title={p.isolation_mode === 'dedicated'
+                        ? 'Move back to the shared worker pool'
+                        : 'Give this connection its own dedicated worker + schema'}
+                      onClick={() => setIsolation.mutate({ id: p.id, mode: p.isolation_mode === 'dedicated' ? 'shared' : 'dedicated' })}
+                    >
+                      {p.isolation_mode === 'dedicated' ? 'Make shared' : 'Make dedicated'}
+                    </Button>
+                  )}
                 </div>
               </Card>
             );

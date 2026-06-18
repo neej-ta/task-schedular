@@ -162,3 +162,34 @@ C1 **edge SSRF** (REST handlers now run the deny-by-default guard + scheme check
 | M9 | rest_push marks the job failed on partial push without auto-retry (avoids duplicate re-sends to a non-idempotent API); status/metrics are single-counted via the runner's final-status read. |
 | L4 | `/metrics` is unauthenticated (standard for Prometheus scraping); exposes counts/topology, no secrets. Gate at the network layer in prod. |
 | — | MySQL/SQL Server **target writers** still pending (Postgres-only); a periodic **reaper** for the rare alive-but-channel-dropped worker complements the redelivery-based reclaim. |
+
+## M7 — Per-project isolation tiers (Phases 1–4 implemented; hardening + live spawn pending)
+
+Full design: [DESIGN-isolation-tiers.md](DESIGN-isolation-tiers.md). Phase 1
+(routing tier), Phase 2 (per-project schema), Phase 3 (the `services/provisioner`
+Docker-API reconcile loop) and Phase 4 (promote/demote endpoint + dashboard toggle
++ deployment wiring) are implemented. Phases 1–2 and the Phase-4 promote/demote
+flow are verified live against the running stack; Phase 3 is verified by reconcile
+unit tests + a read-only probe of the live Docker daemon. **Still pending:** the
+scoped Docker-socket proxy (D55/D56) and a real end-to-end spawn of a dedicated
+container, which needs the app image rebuilt with the M7 code. `shared`-tier
+projects are unchanged throughout. Known deferred gap: the dashboard's global
+Jobs/Activity views still read `public` and won't show a dedicated project's jobs
+(per-project schema) until the read path is made tier-aware (Phase 2b).
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| D58 | **Promote provisions the schema synchronously in the request** (`POST /projects/:id/isolation`), then marks the project `dedicated`/`provisioning`; the provisioner creates the container asynchronously. Demote marks `shared`/`stopping` and the provisioner removes the container; the per-project schema + data are **retained**. | `db_schema` must be set before the first enqueue (else a dedicated job's routing key is per-project but its row would fall back to `public`). Retaining data on demote avoids destructive surprises; a separate destroy path can drop it. |
+| D59 | **The provisioner is a supervised process in the `app` container** (inert unless `PROVISIONER_ENABLED=true`), and the Docker socket is mounted into `app`. Dedicated workers are dynamic extra containers (reuse the app image, `WORKER_MODE=project`). | Keeps the base stack at its consolidated container count (D52 relaxation only adds dynamic per-project workers, not new static services). Opt-in default keeps `docker compose up` behavior and security posture unchanged until explicitly enabled. |
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| D56 | **Provisioner talks to Docker via a dependency-free Engine-API client over the socket** (Node `http` + `socketPath`), behind an `Orchestrator` interface with a pure `reconcileOnce`. INERT unless `PROVISIONER_ENABLED=true`. Only ever lists/stops/removes containers labelled `conductor.role=dedicated-worker`; takes no job-controlled input (only UUID-derived schema names + operator config). | No new dependency (fits the CVE-averse, minimal-footprint posture). The interface keeps reconcile unit-testable and leaves room for a K8s backend. Label-scoping + validated inputs contain the root-equivalent socket surface; a scoped socket proxy is the Phase-4 hardening (D55). |
+| D57 | **Provisioner readies a project BEFORE starting its container**: `provisionProjectSchema` + `assertProjectTopology`, then create+start. Demote/delete stops+removes the container but does **not** drop the schema (data retained). | Closes the "jobs discarded before the queue exists" gap (Phase-2 known gap). Retaining the schema on demote avoids data loss; an explicit destroy path can drop it later. |
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| D52 | **Two isolation tiers per project** via `projects.isolation_mode` (`shared` \| `dedicated`). `shared` is exactly today's behavior (shared pool + Redis per-project semaphore, D45). `dedicated` is additive and opt-in. **This consciously relaxes the prior "single `app` container / ≤5 containers" dev-stack constraint** — a `dedicated` tier provisions containers dynamically, which a static compose file cannot express. | The operator wants both the current logical multi-tenancy *and* a stronger per-project runtime. Making it a per-project flag keeps non-opted projects untouched while allowing escalation where a noisy/sensitive tenant needs hard isolation. |
+| D53 | **Schedules stay in the control DB for both tiers**; only *execution data* (jobs/events/logs/errors/batches/chunks/results) moves to a per-project schema `proj_<id>` for `dedicated`. | Keeps the single global-leader scheduler (D15) unchanged — it still does one query over `job_definitions`. Only where run-state is written differs, decided downstream at enqueue/execute. |
+| D54 | **Tier-aware queue routing** decided in `enqueueJob`: `shared` → `conductor.q.<type>`, `dedicated` → `conductor.q.<type>.p.<projectId>`. Workers gain a run mode: `shared` (type queues + semaphore) vs `project` (one project's queues, no semaphore — the container is the isolation). | One branch point; both `enqueueJob` callers (scheduler + gateway) inherit it. Per-project queues give a `dedicated` tenant a backlog that never sits behind another's. |
+| D55 | **`dedicated` containers provisioned via the Docker Engine API** by a new `services/provisioner` reconcile loop (desired = `isolation_mode='dedicated'`, actual = label-matched containers). Single-host; a Kubernetes backend behind the same interface is the multi-host successor (not M7). | Closest to the existing single-host setup. **Security:** the Docker socket grants root-equivalent host access — the largest new privilege surface; to be mitigated with a scoped socket proxy (label-restricted create/stop/inspect) and provisioner-only socket access. |

@@ -1,6 +1,8 @@
 import { query } from '@conductor/db';
-import type { Provider } from '@conductor/contracts';
+import type { IsolationMode, Provider } from '@conductor/contracts';
 import { encryptSecret, decryptSecret, type EnvelopeCiphertext } from '@conductor/security';
+
+export type ContainerState = 'none' | 'provisioning' | 'running' | 'stopping' | 'stopped' | 'error';
 
 export interface ProjectRow {
   id: string;
@@ -23,6 +25,9 @@ export interface ProjectRow {
   max_rows: number;
   concurrency_limit: number;
   allowlist_hosts: string[];
+  isolation_mode: IsolationMode;
+  db_schema: string | null;
+  container_state: ContainerState;
   created_at: string;
   updated_at: string;
 }
@@ -171,6 +176,26 @@ export async function softDeleteProject(id: string): Promise<boolean> {
     [id],
   );
   return (rowCount ?? 0) > 0;
+}
+
+/**
+ * Set a project's isolation tier (M7). Promote → 'dedicated' + container_state
+ * 'provisioning' (the provisioner then creates the worker container); demote →
+ * 'shared' (the provisioner stops the container; the per-project schema and its
+ * data are retained — see D57). Schema provisioning on promote is done by the
+ * caller (route) so db_schema is set synchronously.
+ */
+export async function setProjectIsolation(id: string, mode: IsolationMode): Promise<ProjectRow | null> {
+  const { rows } = await query<ProjectRow>(
+    `UPDATE projects
+        SET isolation_mode = $2,
+            container_state = CASE WHEN $2 = 'dedicated' THEN 'provisioning' ELSE 'stopping' END,
+            updated_at = now()
+      WHERE id = $1 AND deleted_at IS NULL
+      RETURNING *`,
+    [id, mode],
+  );
+  return rows[0] ?? null;
 }
 
 /** Decrypt a project's secret in-memory. Callers must never log the result. */

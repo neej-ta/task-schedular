@@ -30,11 +30,24 @@ export const DELAYED_EXCHANGE = `${QUEUE_PREFIX}.delayed`;
 export const DLX_EXCHANGE = `${QUEUE_PREFIX}.dlx`;
 export const DLQ_NAME = `${QUEUE_PREFIX}.dlq`;
 
-export function routingKeyForType(type: string): string {
-  return `${QUEUE_PREFIX}.job.${type}`;
+/** Per-project isolation tier (M7). `shared` = pooled; `dedicated` = own queues + worker. */
+export const IsolationModeSchema = z.enum(['shared', 'dedicated']);
+export type IsolationMode = z.infer<typeof IsolationModeSchema>;
+
+/**
+ * Routing key for a job type. For a `dedicated`-tier project, pass `projectId`
+ * to target its per-project routing key (`conductor.job.<type>.p.<id>`); omit it
+ * (or pass null) for the `shared` pool. The relay/runner store and reuse exactly
+ * the key produced here, so retries land back on the same queue.
+ */
+export function routingKeyForType(type: string, projectId?: string | null): string {
+  const base = `${QUEUE_PREFIX}.job.${type}`;
+  return projectId ? `${base}.p.${projectId}` : base;
 }
-export function queueForType(type: string): string {
-  return `${QUEUE_PREFIX}.q.${type}`;
+/** Queue name for a job type — `dedicated` projects get `conductor.q.<type>.p.<id>`. */
+export function queueForType(type: string, projectId?: string | null): string {
+  const base = `${QUEUE_PREFIX}.q.${type}`;
+  return projectId ? `${base}.p.${projectId}` : base;
 }
 
 /** All job types — used to declare one capability queue each. */

@@ -1,4 +1,4 @@
-import { getConnection, assertTopology, createConfirmChannel, closeConnection } from '@conductor/messaging';
+import { getConnection, assertTopology, assertProjectTopology, createConfirmChannel, closeConnection } from '@conductor/messaging';
 import { closePool, query } from '@conductor/db';
 import { closeAllTargetPools } from '@conductor/targetdb';
 import { Runner } from '@conductor/worker-runtime';
@@ -32,6 +32,10 @@ async function main() {
   await getConnection();
   const setup = await createConfirmChannel();
   await assertTopology(setup);
+  if (config.mode === 'project') {
+    await assertProjectTopology(setup, config.projectId!);
+    log(`dedicated worker for project ${config.projectId}`);
+  }
   await setup.close();
 
   const runner = new Runner({
@@ -43,6 +47,8 @@ async function main() {
     heartbeatMs: config.heartbeatMs,
     handlers,
     log,
+    mode: config.mode,
+    projectId: config.projectId,
   });
   await runner.start();
   log('worker ready');

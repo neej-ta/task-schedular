@@ -31,6 +31,7 @@ COPY services/gateway-api/package.json services/gateway-api/
 COPY services/scheduler/package.json services/scheduler/
 COPY services/worker-core/package.json services/worker-core/
 COPY services/worker-edge/package.json services/worker-edge/
+COPY services/provisioner/package.json services/provisioner/
 COPY dashboard/package.json dashboard/
 
 RUN npm install --workspaces --include-workspace-root

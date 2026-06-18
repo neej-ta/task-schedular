@@ -42,3 +42,24 @@ export async function assertTopology(ch: Channel): Promise<void> {
     await ch.bindQueue(queue, DELAYED_EXCHANGE, rk);
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-project topology for the `dedicated` tier (M7). Declares durable
+// per-project capability queues (conductor.q.<type>.p.<id>) bound to the
+// per-project routing keys, sharing the same DLX. Idempotent — asserted by the
+// dedicated worker on startup (and later, pre-declared by the provisioner so a
+// promoted project's jobs aren't discarded before its container is up).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function assertProjectTopology(ch: Channel, projectId: string): Promise<void> {
+  for (const type of JOB_TYPES) {
+    const queue = queueForType(type, projectId);
+    const rk = routingKeyForType(type, projectId);
+    await ch.assertQueue(queue, {
+      durable: true,
+      arguments: { 'x-dead-letter-exchange': DLX_EXCHANGE },
+    });
+    await ch.bindQueue(queue, JOBS_EXCHANGE, rk);
+    await ch.bindQueue(queue, DELAYED_EXCHANGE, rk);
+  }
+}

@@ -13,10 +13,17 @@ export const config = {
   // Retry backoff base (ms) — exponential per attempt via the delayed exchange.
   retryBackoffBaseMs: Number(process.env.RETRY_BACKOFF_BASE_MS ?? 2000),
   logLevel: process.env.LOG_LEVEL ?? 'info',
+  // Isolation tier (M7). 'shared' = pooled queues + Redis semaphore (default);
+  // 'project' = dedicated worker bound to WORKER_PROJECT_ID's per-project queues.
+  mode: (process.env.WORKER_MODE === 'project' ? 'project' : 'shared') as 'shared' | 'project',
+  projectId: process.env.WORKER_PROJECT_ID,
 };
 
 export function assertConfig(): void {
   for (const v of ['DATABASE_URL', 'RABBITMQ_URL', 'CONDUCTOR_MASTER_KEY']) {
     if (!process.env[v]) throw new Error(`${v} is not set`);
+  }
+  if (config.mode === 'project' && !config.projectId) {
+    throw new Error('WORKER_MODE=project requires WORKER_PROJECT_ID');
   }
 }
