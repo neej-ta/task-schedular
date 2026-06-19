@@ -4,7 +4,7 @@ import type {
   ReactNode,
   SelectHTMLAttributes,
 } from 'react';
-import { Info } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Info } from 'lucide-react';
 import type { Tone } from './labels';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,6 +125,72 @@ export function Hint({ children }: { children: ReactNode }) {
     <div className="flex items-start gap-2 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-sm text-indigo-900">
       <Info className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
       <span>{children}</span>
+    </div>
+  );
+}
+
+/**
+ * Pagination controls — a "rows per page" picker (10/25/50/100), a "X–Y of Z"
+ * summary, and prev/next buttons. Page is 1-based. Works for both server-side
+ * paging (pass the server's `total`) and client-side paging (pass the list
+ * length). Changing the page size resets the parent to page 1 (caller's job).
+ */
+export function Pagination({
+  page,
+  pageSize,
+  total,
+  onPageChange,
+  onPageSizeChange,
+  pageSizeOptions = [10, 25, 50, 100],
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
+  pageSizeOptions?: number[];
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, total);
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
+      <label className="flex items-center gap-2">
+        <span>Rows per page</span>
+        <Select
+          value={String(pageSize)}
+          onChange={(e) => onPageSizeChange(Number(e.target.value))}
+          className="w-20"
+        >
+          {pageSizeOptions.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </Select>
+      </label>
+      <div className="flex items-center gap-3">
+        <span className="tabular-nums">{from}–{to} of {total}</span>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            className="px-2 py-1.5"
+            disabled={page <= 1}
+            onClick={() => onPageChange(page - 1)}
+            aria-label="Previous page"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span className="px-1 text-xs tabular-nums">Page {Math.min(page, totalPages)} of {totalPages}</span>
+          <Button
+            variant="ghost"
+            className="px-2 py-1.5"
+            disabled={page >= totalPages}
+            onClick={() => onPageChange(page + 1)}
+            aria-label="Next page"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

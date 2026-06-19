@@ -3,7 +3,7 @@ import { Activity as ActivityIcon } from 'lucide-react';
 import { api } from '../api';
 import { useEventSource } from '../sse';
 import type { ActivityEvent } from '../types';
-import { Card, EmptyState, PageHeader, Pill } from '../ui';
+import { Card, EmptyState, PageHeader, Pagination, Pill } from '../ui';
 import type { Tone } from '../labels';
 
 const EVENT: Record<string, { label: string; tone: Tone }> = {
@@ -22,11 +22,18 @@ const FILTERS: [string, string][] = [['', 'Everything'], ['job.', 'Tasks only'],
 export function Activity({ onOpenJob }: { onOpenJob: (id: string) => void }) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [filter, setFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   useEffect(() => { api<{ activity: ActivityEvent[] }>('/activity').then((r) => setEvents(r.activity)); }, []);
   useEventSource('/activity/stream', { activity: (d) => setEvents((p) => [d as ActivityEvent, ...p].slice(0, 500)) });
 
+  useEffect(() => { setPage(1); }, [filter, pageSize]);
+
   const filtered = events.filter((e) => !filter || e.type.includes(filter));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const effectivePage = Math.min(page, totalPages);
+  const pagedEvents = filtered.slice((effectivePage - 1) * pageSize, effectivePage * pageSize);
 
   return (
     <div>
@@ -47,7 +54,7 @@ export function Activity({ onOpenJob }: { onOpenJob: (id: string) => void }) {
       ) : (
         <Card className="overflow-hidden">
           <ol className="divide-y divide-slate-100">
-            {filtered.map((e, i) => {
+            {pagedEvents.map((e, i) => {
               const info = EVENT[e.type] ?? { label: e.type, tone: 'slate' as Tone };
               return (
                 <li key={i} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
@@ -60,6 +67,15 @@ export function Activity({ onOpenJob }: { onOpenJob: (id: string) => void }) {
             })}
           </ol>
         </Card>
+      )}
+      {filtered.length > 0 && (
+        <Pagination
+          page={effectivePage}
+          pageSize={pageSize}
+          total={filtered.length}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
       )}
     </div>
   );

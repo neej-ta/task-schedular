@@ -1,11 +1,11 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Pause, Play, Zap } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import type { JobDefinition, JobType, Project } from '../types';
 import { typeInfo } from '../labels';
-import { Button, Card, EmptyState, Field, Hint, Input, PageHeader, Pill, Select } from '../ui';
+import { Button, Card, EmptyState, Field, Hint, Input, PageHeader, Pagination, Pill, Select } from '../ui';
 import { previewCron, humanize, DAY_LABELS, type ScheduleSpec, type ScheduleKind } from '../schedule';
 
 const JOB_TYPES: JobType[] = [
@@ -23,13 +23,22 @@ export function Schedules({ onOpenJob }: { onOpenJob: (id: string) => void }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const canEdit = user?.role === 'admin' || user?.role === 'operator';
+
+  useEffect(() => { setPage(1); }, [pageSize]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['definitions'],
     queryFn: () => api<{ definitions: JobDefinition[] }>('/job-definitions'),
     refetchInterval: 5000,
   });
+
+  const defs = data?.definitions ?? [];
+  const totalPages = Math.max(1, Math.ceil(defs.length / pageSize));
+  const effectivePage = Math.min(page, totalPages);
+  const pagedDefs = defs.slice((effectivePage - 1) * pageSize, effectivePage * pageSize);
 
   const toggle = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api(`/job-definitions/${id}/${enabled ? 'disable' : 'enable'}`, { method: 'POST' }),
@@ -58,7 +67,7 @@ export function Schedules({ onOpenJob }: { onOpenJob: (id: string) => void }) {
         </EmptyState>
       ) : (
         <div className="grid gap-3">
-          {data?.definitions.map((d) => {
+          {pagedDefs.map((d) => {
             const t = typeInfo(d.type);
             return (
               <Card key={d.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
@@ -84,6 +93,15 @@ export function Schedules({ onOpenJob }: { onOpenJob: (id: string) => void }) {
             );
           })}
         </div>
+      )}
+      {defs.length > 0 && (
+        <Pagination
+          page={effectivePage}
+          pageSize={pageSize}
+          total={defs.length}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
       )}
     </div>
   );

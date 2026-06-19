@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ListChecks, Plus } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import type { Job } from '../types';
 import { typeInfo, statusInfo } from '../labels';
-import { Button, Card, EmptyState, Input, PageHeader, Pill, Select } from '../ui';
+import { Button, Card, EmptyState, Input, PageHeader, Pagination, Pill, Select } from '../ui';
 import { NewTaskForm } from './NewTaskForm';
 
 function timeAgo(iso: string): string {
@@ -24,14 +24,22 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
   const [status, setStatus] = useState('');
   const [type, setType] = useState('');
   const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  // Any filter change resets to the first page so you never land on an
+  // out-of-range page (e.g. on page 5, then a filter narrows it to 3 rows).
+  useEffect(() => { setPage(1); }, [status, type, q, pageSize]);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['jobs', status, type, q],
+    queryKey: ['jobs', status, type, q, page, pageSize],
     queryFn: () => {
       const p = new URLSearchParams();
       if (status) p.set('status', status);
       if (type) p.set('type', type);
       if (q) p.set('q', q);
+      p.set('limit', String(pageSize));
+      p.set('offset', String((page - 1) * pageSize));
       return api<{ jobs: Job[]; total: number }>(`/jobs?${p.toString()}`);
     },
     refetchInterval: 15000,
@@ -82,7 +90,7 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
       {isLoading && <p className="text-slate-400">Loading…</p>}
       {error && <p className="text-rose-600">{(error as Error).message}</p>}
 
-      {data && data.jobs.length === 0 ? (
+      {data && data.total === 0 ? (
         <EmptyState icon={<ListChecks className="h-10 w-10" />} title="No tasks yet">
           {canEdit ? (
             <>Tasks appear here when you run something. Press <b>New task</b> above to start one now, or set up a
@@ -130,6 +138,15 @@ export function Jobs({ onOpenJob }: { onOpenJob: (id: string) => void }) {
             </tbody>
           </table>
         </Card>
+      )}
+      {data && data.total > 0 && (
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={data.total}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
       )}
       <p className="mt-3 text-xs text-slate-400">Updates live — no need to refresh.</p>
     </div>
