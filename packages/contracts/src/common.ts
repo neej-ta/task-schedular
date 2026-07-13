@@ -61,4 +61,8 @@ export const JOB_TYPES = [
   'xml_integration',
   'rest_pull',
   'rest_push',
+  // Scheduler-only trigger: fires an authenticated HTTP call to a target
+  // project's own job endpoint (the project runs its own workflow). Lets
+  // Conductor own scheduling while execution stays per-project.
+  'webhook',
 ] as const;

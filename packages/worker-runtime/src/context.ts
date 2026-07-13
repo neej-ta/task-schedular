@@ -45,6 +45,21 @@ export async function resolveContext(envelope: JobEnvelope): Promise<JobContext>
   const project = projRows[0];
   if (!project) throw new Error(`project ${job.project_id} not found`);
 
+  // Entity-less job types (e.g. `webhook`) don't operate on a project entity/
+  // table — they trigger the project's own endpoint. Skip the entity/rule-set
+  // resolution and return a stub so these jobs don't require a project_entities
+  // row.
+  const ENTITYLESS_TYPES = new Set(['webhook']);
+  if (ENTITYLESS_TYPES.has(job.type)) {
+    return {
+      envelope,
+      job,
+      project,
+      entity: { name: job.entity, targetTable: '', primaryKey: '', mapping: {}, ruleSetId: null },
+      ruleSet: { ruleSetId: 'none', rules: [], transforms: [] },
+    };
+  }
+
   const { rows: entRows } = await query<{
     name: string;
     target_table: string;

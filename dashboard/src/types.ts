@@ -49,7 +49,8 @@ export type JobType =
   | 'file_outbound'
   | 'xml_integration'
   | 'rest_pull'
-  | 'rest_push';
+  | 'rest_push'
+  | 'webhook';
 
 export interface JobDefinition {
   id: string;

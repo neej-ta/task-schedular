@@ -8,6 +8,7 @@ import {
   PencilLine,
   Trash2,
   Upload,
+  Webhook,
   type LucideIcon,
 } from 'lucide-react';
 import type { JobType } from './types';
@@ -33,6 +34,7 @@ export const JOB_TYPE_INFO: Record<JobType, TypeInfo> = {
   file_outbound: { label: 'Export a file', blurb: 'Save table data out to a file', icon: FileDown },
   rest_pull: { label: 'Import from an API', blurb: 'Pull records from a web service', icon: ArrowDownToLine },
   rest_push: { label: 'Send to an API', blurb: 'Push records to a web service', icon: ArrowUpFromLine },
+  webhook: { label: 'Trigger a project job', blurb: 'On schedule, call a project endpoint to run its own job', icon: Webhook },
 };
 
 export function typeInfo(type: string): TypeInfo {

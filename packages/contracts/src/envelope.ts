@@ -12,6 +12,9 @@ export const JobTypeSchema = z.enum([
   'xml_integration',
   'rest_pull',
   'rest_push',
+  // Scheduler-only trigger (no target-DB work): authenticated HTTP call to a
+  // project's own job endpoint. See JOB_TYPES in common.ts.
+  'webhook',
 ]);
 export type JobType = z.infer<typeof JobTypeSchema>;
 
